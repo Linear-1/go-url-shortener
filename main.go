@@ -5,13 +5,13 @@ import (
 	"log"
 	"net/http"
 	"time"
-
 	"url-shortener/config"
 	"url-shortener/database"
+	"url-shortener/handlers"
+	"url-shortener/redis"
 	"url-shortener/repository"
 	"url-shortener/routes"
 	"url-shortener/services"
-	"url-shortener/handlers"
 )
 
 func main() {
@@ -31,14 +31,24 @@ func main() {
 		log.Fatal(err)
 	}
 
+	rdb , err := redis.Connect(ctx)
+	if err != nil {
+		log.Fatal("Redis connection failed:" , err)
+	}
+
+	defer rdb.Close()
+
+
 	urlRepo := repository.NewURLRepository(db)
-	urlService := services.NewURLService(urlRepo)
+	urlCache := repository.NewCacheRepository(rdb)
+	urlService := services.NewURLService(urlRepo,urlCache)
 	urlHandler := handlers.NewURLHandler(urlService,cfg.BaseURL)
 
 
 	defer db.Close()
 
 	log.Println("Connected to PostgreSQL successfully!")
+	log.Println("Connected to Redis successfully!")
 
 	mux := http.NewServeMux()
 	routes.Register(mux, urlHandler)

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 	"time"
 	"url-shortener/models"
 	"url-shortener/repository"
@@ -10,12 +11,14 @@ import (
 
 type URLService struct{
 	repo *repository.URLRepository
+	cacheRepo *repository.CacheRepository
 }
 
 
-func NewURLService(repo *repository.URLRepository) *URLService  {
+func NewURLService(repo *repository.URLRepository, cacheRepo *repository.CacheRepository) *URLService  {
 	return &URLService{
 		repo: repo,
+		cacheRepo: cacheRepo,
 	}
 }
 
@@ -44,10 +47,17 @@ func (s *URLService) CreateShortURL(ctx context.Context , OriginalURL string) (*
 			}
 
 			renewedURL , err := s.repo.RenewUrl(ctx , renewalURL)
-
+			oldShortCode := existingURL.ShortCode
 			if err != nil{
 				return nil,err
 			}
+			err = s.cacheRepo.Delete(ctx , "url:"+oldShortCode)
+			if err != nil {
+				log.Printf("Failed to delete the cached URL: %v" , err)
+			}else{
+				log.Printf("Cached ShortCode Deleted %s" , existingURL.ShortCode)
+			}
+
 			return renewedURL,nil
 		}
 
@@ -74,6 +84,11 @@ func (s *URLService) CreateShortURL(ctx context.Context , OriginalURL string) (*
 }
 
 func (s *URLService) RedirectURL(ctx context.Context, shortCode string) (string, error) {
+	originalURL , err := s.cacheRepo.Get(ctx , "url:"+shortCode)
+	if err == nil {
+		log.Printf("Cache hit: %s", shortCode)
+		return originalURL , nil
+	}
 	originalURL ,expiresAt, err := s.repo.GetURLByShortCode(ctx,shortCode)
 	if err != nil{
 		return "",err
@@ -85,7 +100,18 @@ func (s *URLService) RedirectURL(ctx context.Context, shortCode string) (string,
 	if !time.Now().Before(expiresAt){
 		return "",ErrURLExpired
 	}
-	return originalURL,nil
+	log.Printf("Cache miss: %s" , shortCode)
+	remainingTime := time.Until(expiresAt)
+	err = s.cacheRepo.Set(ctx , "url:"+shortCode , originalURL , remainingTime)
+
+	if err != nil {
+		log.Printf("Failed to cache the URL: %v", err)
+	}else{
+		log.Printf("URL Cached %s" , shortCode)
+	}
+
+
+	return originalURL , nil
 	 
 	
 }
